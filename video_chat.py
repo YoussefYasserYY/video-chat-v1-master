@@ -1,16 +1,18 @@
-import cv2
-import numpy as np
-import streamlit as st
+import io
 import socket
+import struct
+import time
 import threading
-import os
+import picamera
+import streamlit as st
 
 # Set the IP address and port number
 HOST = "0.0.0.0"
-PORT = int(os.environ.get("PORT", 5000))
+PORT = 8000
 
 # Create a socket
-server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server_socket = socket.socket()
+server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
 # Bind the socket to the IP address and port number
 server_socket.bind((HOST, PORT))
@@ -23,29 +25,31 @@ def handle_client(client_socket):
     # Get the client's IP address
     client_ip = client_socket.getpeername()[0]
 
-    # Create a video capture object
-    capture = cv2.VideoCapture(0)
-
     # Start a loop to read frames from the camera
-    while True:
-        # Read a frame from the camera
-        _, frame = capture.read()
-
-        # Convert the frame to a NumPy array
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        frame = np.array(frame)
-
-        # Send the frame to the client
-        try:
-            client_socket.sendall(frame.tobytes())
-        except:
-            break
-
-    # Close the video capture object
-    capture.release()
-
-    # Close the client socket
-    client_socket.close()
+    try:
+        connection = client_socket.makefile('wb')
+        with picamera.PiCamera() as camera:
+            camera.resolution = (640, 480)
+            camera.framerate = 30
+            time.sleep(2)
+            start = time.time()
+            stream = io.BytesIO()
+            for _ in camera.capture_continuous(stream, 'jpeg', use_video_port=True):
+                # Write the length of the capture to the stream and flush to ensure it actually gets sent
+                connection.write(struct.pack('<L', stream.tell()))
+                connection.flush()
+                # Rewind the stream and send the image data over the wire
+                stream.seek(0)
+                connection.write(stream.read())
+                # Reset the stream for the next capture
+                stream.seek(0)
+                stream.truncate()
+                # Check if the client has closed the connection
+                if time.time() - start > 300:
+                    break
+    finally:
+        connection.close()
+        client_socket.close()
 
 # Start the video chat
 def start_video_chat():
@@ -54,11 +58,8 @@ def start_video_chat():
     # Create a list to store the client threads
     client_threads = []
 
-    # Create a flag to indicate whether the server should continue running or not
-    running = True
-
     # Start a loop to accept incoming connections
-    while running:
+    while True:
         # Wait for an incoming connection
         client_socket, client_address = server_socket.accept()
 
@@ -69,25 +70,8 @@ def start_video_chat():
         # Add the thread to the list of client threads
         client_threads.append(thread)
 
-        # Display the video from the client
-        video_placeholder = st.empty()
-        while True:
-            # Receive the frame from the client
-            try:
-                frame_bytes = client_socket.recv(1024)
-                frame = np.frombuffer(frame_bytes, dtype=np.uint8).reshape(480, 640, 3)
-                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                video_placeholder.image(frame, channels="BGR")
-            except:
-                break
-
-        # Remove the thread from the list of client threads
-        client_threads.remove(thread)
-
     # Wait for all client threads to finish
     for thread in client_threads:
         thread.join()
 
-# Run the video chat
-if __name__ == '__main__':
-    start_video_chat()
+start_video_chat()
