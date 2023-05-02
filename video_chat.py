@@ -54,8 +54,11 @@ def start_video_chat():
     # Create a list to store the client threads
     client_threads = []
 
+    # Create a flag to indicate whether the server should continue running or not
+    running = True
+
     # Start a loop to accept incoming connections
-    while True:
+    while running:
         # Wait for an incoming connection
         client_socket, client_address = server_socket.accept()
 
@@ -78,8 +81,13 @@ def start_video_chat():
             except:
                 break
 
+        # Remove the thread from the list of client threads
+        client_threads.remove(thread)
+
     # Wait for all client threads to finish
     for thread in client_threads:
         thread.join()
 
-start_video_chat()
+# Run the video chat
+if __name__ == '__main__':
+    start_video_chat()
